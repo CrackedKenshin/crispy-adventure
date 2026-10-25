@@ -1,0 +1,822 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linear Calendar</title>
+<style>
+/* Fallback values; the active theme overwrites these from JS. */
+:root {
+  --bg: #fafaf9; --panel: #ffffff; --ink: #1c1917; --muted: #78716c;
+  --line: #e7e5e4; --weekend: #f1f0ee; --today: #e11d48;
+  --accent: #2563eb; --on-accent: #ffffff; --danger: #dc2626;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 13px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
+header {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 10;
+}
+.year { font-size: 22px; font-weight: 700; min-width: 72px; text-align: center; font-variant-numeric: tabular-nums; }
+button, select, input, textarea {
+  font: inherit; color: inherit; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px;
+}
+button, select { cursor: pointer; }
+button:hover, select:hover { border-color: var(--muted); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+button.danger { color: var(--danger); }
+button.warn { color: var(--danger); border-color: var(--danger); }
+dialog p { margin: 0; color: var(--muted); line-height: 1.5; }
+.spacer { flex: 1; }
+#legend { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; padding: 10px 16px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
+  border-radius: 999px; border: 1px solid var(--line); background: var(--panel);
+  cursor: pointer; user-select: none;
+}
+.chip .dot { width: 10px; height: 10px; border-radius: 50%; }
+.chip.off { opacity: .4; text-decoration: line-through; }
+.hint { color: var(--muted); font-size: 12px; margin-left: 6px; }
+main { padding: 0 16px 24px; overflow-x: auto; }
+#cal { min-width: 1100px; border-top: 1px solid var(--line); }
+.print-title { display: none; }
+
+.row { display: flex; border-bottom: 1px solid var(--line); }
+.mlabel {
+  width: 46px; flex: none; padding: 4px 8px 0 0; text-align: right;
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+}
+.grid { flex: 1; display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); }
+.head .grid div { text-align: center; font-size: 10px; font-weight: 600; color: var(--muted); padding: 5px 0; }
+.head .grid div.we { color: var(--ink); }
+.day {
+  grid-row: 1 / -1; border-left: 1px solid var(--line);
+  font-size: 10px; color: var(--muted); padding: 2px 3px;
+  user-select: none; cursor: cell; font-variant-numeric: tabular-nums;
+}
+.day.we { background: var(--weekend); }
+.day.empty { border-left-color: transparent; cursor: default; background: transparent; }
+.day.today { box-shadow: inset 0 0 0 2px var(--today); color: var(--today); font-weight: 700; }
+.day.sel { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+.ev {
+  position: relative; z-index: 1; margin: 1px 1px; padding: 0 4px; border-radius: 4px;
+  font-size: 11px; line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer;
+}
+.ev:hover { filter: brightness(1.08); box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.ev.cont-l { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: 0; }
+.ev.cont-r { border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: 0; }
+body.dragging .ev { pointer-events: none; }
+
+dialog {
+  border: 1px solid var(--line); border-radius: 10px; padding: 0;
+  background: var(--panel); color: var(--ink); width: min(420px, calc(100vw - 32px));
+  box-shadow: 0 20px 50px rgba(0,0,0,.3);
+}
+dialog::backdrop { background: rgba(0,0,0,.35); }
+dialog form { padding: 18px; display: grid; gap: 10px; }
+dialog h2 { margin: 0 0 4px; font-size: 16px; }
+dialog label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+dialog input, dialog select, dialog textarea { width: 100%; color: var(--ink); }
+dialog textarea { resize: vertical; min-height: 60px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.actions { display: flex; gap: 8px; margin-top: 6px; }
+.catrow { display: grid; grid-template-columns: 40px 1fr auto; gap: 8px; align-items: center; }
+.catrow input[type=color] { padding: 2px; height: 32px; }
+.catrow input[type=color]:disabled { cursor: not-allowed; opacity: .7; }
+dialog label.check { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 13px; }
+dialog label.check input { width: auto; }
+
+@page { size: A4 landscape; margin: 8mm; }
+@media print {
+  header, #legend { display: none; }
+  main { padding: 0; overflow: visible; }
+  #cal { min-width: 0; }
+  .print-title { display: block; margin: 0 0 6px; font-size: 18px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <button id="prev" title="Previous year (←)">‹</button>
+  <div class="year" id="yearLabel"></div>
+  <button id="next" title="Next year (→)">›</button>
+  <button id="todayBtn" title="Jump to this year (T)">Today</button>
+  <div class="spacer"></div>
+  <select id="themeSel" title="Colour theme"></select>
+  <select id="modeSel" title="Light / dark mode">
+    <option value="auto">◐ Auto</option>
+    <option value="light">☀ Light</option>
+    <option value="dark">☾ Dark</option>
+  </select>
+  <select id="layoutSel" title="Layout">
+    <option value="week">Weekdays aligned</option>
+    <option value="date">Dates aligned</option>
+  </select>
+  <select id="weekStartSel" title="Week starts on">
+    <option value="1">Monday start</option>
+    <option value="0">Sunday start</option>
+  </select>
+  <button id="fileBtn"></button>
+  <button id="exportBtn" title="Download a backup of all events">Export</button>
+  <button id="importBtn" title="Import a .json backup or an .ics calendar file">Import</button>
+  <button id="printBtn">Print</button>
+  <input type="file" id="fileInput" accept=".json,.ics" hidden>
+</header>
+
+<div id="legend"></div>
+
+<main>
+  <h1 class="print-title" id="printTitle"></h1>
+  <div id="cal"></div>
+</main>
+
+<dialog id="evDlg">
+  <form id="evForm">
+    <h2 id="evDlgTitle">New event</h2>
+    <label>Title <input name="title" required autocomplete="off"></label>
+    <div class="two">
+      <label>Start <input type="date" name="start" required></label>
+      <label>End <input type="date" name="end" required></label>
+    </div>
+    <label>Category <select name="cat"></select></label>
+    <label>Notes <textarea name="notes"></textarea></label>
+    <div class="actions">
+      <button type="submit" class="primary">Save</button>
+      <button type="button" id="evCancel">Cancel</button>
+      <div class="spacer"></div>
+      <button type="button" id="evDelete" class="danger">Delete</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="catDlg">
+  <form method="dialog">
+    <h2>Categories</h2>
+    <label class="check"><input type="checkbox" id="themeColors"> Use the theme's colours for categories</label>
+    <div id="catList" style="display:grid;gap:8px"></div>
+    <div class="actions">
+      <button type="button" id="catAdd">+ Add category</button>
+      <div class="spacer"></div>
+      <button class="primary">Done</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="fileDlg">
+  <form method="dialog">
+    <h2>Auto-save to a file</h2>
+    <p id="fileInfo"></p>
+    <div class="actions">
+      <button type="button" id="fileNew">Create new file…</button>
+      <button type="button" id="fileOpen">Open existing file…</button>
+    </div>
+    <div class="actions">
+      <button type="button" id="fileUnlink" class="danger">Stop auto-saving</button>
+      <div class="spacer"></div>
+      <button class="primary">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const KEY = 'linear-calendar.v1';
+const DEFAULT_CATS = [
+  { id: 'personal', name: 'Personal', color: '#3b82f6' },
+  { id: 'work',     name: 'Work',     color: '#f97316' },
+  { id: 'travel',   name: 'Travel',   color: '#10b981' },
+  { id: 'holiday',  name: 'Holiday',  color: '#e11d48' },
+];
+// Each variant: page colours + an 8-colour palette for categories,
+// ordered blue, orange, green, red, purple, yellow, cyan, pink.
+const THEMES = {
+  default: { name: 'Default',
+    light: { bg: '#fafaf9', panel: '#ffffff', ink: '#1c1917', muted: '#78716c', line: '#e7e5e4', weekend: '#f1f0ee', today: '#e11d48', accent: '#2563eb',
+             palette: ['#3b82f6', '#f97316', '#10b981', '#e11d48', '#8b5cf6', '#eab308', '#06b6d4', '#ec4899'] },
+    dark:  { bg: '#0c0a09', panel: '#1c1917', ink: '#f5f5f4', muted: '#a8a29e', line: '#2e2a27', weekend: '#171412', today: '#fb7185', accent: '#60a5fa',
+             palette: ['#60a5fa', '#fb923c', '#34d399', '#fb7185', '#a78bfa', '#facc15', '#22d3ee', '#f472b6'] } },
+  gruvbox: { name: 'Gruvbox',
+    light: { bg: '#fbf1c7', panel: '#f9f5d7', ink: '#3c3836', muted: '#7c6f64', line: '#d5c4a1', weekend: '#f2e5bc', today: '#9d0006', accent: '#076678',
+             palette: ['#076678', '#af3a03', '#79740e', '#9d0006', '#8f3f71', '#b57614', '#427b58', '#928374'] },
+    dark:  { bg: '#282828', panel: '#3c3836', ink: '#ebdbb2', muted: '#a89984', line: '#504945', weekend: '#32302f', today: '#fb4934', accent: '#83a598',
+             palette: ['#83a598', '#fe8019', '#b8bb26', '#fb4934', '#d3869b', '#fabd2f', '#8ec07c', '#928374'] } },
+  nord: { name: 'Nord',
+    light: { bg: '#eceff4', panel: '#f8f9fb', ink: '#2e3440', muted: '#4c566a', line: '#d8dee9', weekend: '#e5e9f0', today: '#bf616a', accent: '#5e81ac',
+             palette: ['#5e81ac', '#d08770', '#a3be8c', '#bf616a', '#b48ead', '#ebcb8b', '#88c0d0', '#81a1c1'] },
+    dark:  { bg: '#2e3440', panel: '#3b4252', ink: '#eceff4', muted: '#9aa5b8', line: '#434c5e', weekend: '#353b49', today: '#bf616a', accent: '#88c0d0',
+             palette: ['#81a1c1', '#d08770', '#a3be8c', '#bf616a', '#b48ead', '#ebcb8b', '#88c0d0', '#5e81ac'] } },
+  dracula: { name: 'Dracula',
+    light: { bg: '#fffbeb', panel: '#ffffff', ink: '#1f1f1f', muted: '#6c664b', line: '#e6e0c8', weekend: '#f5f0dc', today: '#a3144d', accent: '#644ac9',
+             palette: ['#036a96', '#a34d14', '#14710a', '#cb3a2a', '#644ac9', '#846e15', '#6c664b', '#a3144d'] },
+    dark:  { bg: '#282a36', panel: '#21222c', ink: '#f8f8f2', muted: '#8a93b8', line: '#44475a', weekend: '#2f3141', today: '#ff79c6', accent: '#bd93f9',
+             palette: ['#8be9fd', '#ffb86c', '#50fa7b', '#ff5555', '#bd93f9', '#f1fa8c', '#6272a4', '#ff79c6'] } },
+  solarized: { name: 'Solarized',
+    light: { bg: '#fdf6e3', panel: '#eee8d5', ink: '#073642', muted: '#657b83', line: '#ddd6c1', weekend: '#f5efdc', today: '#dc322f', accent: '#268bd2',
+             palette: ['#268bd2', '#cb4b16', '#859900', '#dc322f', '#6c71c4', '#b58900', '#2aa198', '#d33682'] },
+    dark:  { bg: '#002b36', panel: '#073642', ink: '#eee8d5', muted: '#839496', line: '#174652', weekend: '#04313c', today: '#dc322f', accent: '#268bd2',
+             palette: ['#268bd2', '#cb4b16', '#859900', '#dc322f', '#6c71c4', '#b58900', '#2aa198', '#d33682'] } },
+  catppuccin: { name: 'Catppuccin',
+    light: { bg: '#eff1f5', panel: '#e6e9ef', ink: '#4c4f69', muted: '#6c6f85', line: '#ccd0da', weekend: '#e6e9ef', today: '#d20f39', accent: '#8839ef',
+             palette: ['#1e66f5', '#fe640b', '#40a02b', '#d20f39', '#8839ef', '#df8e1d', '#179299', '#ea76cb'] },
+    dark:  { bg: '#1e1e2e', panel: '#181825', ink: '#cdd6f4', muted: '#a6adc8', line: '#313244', weekend: '#232334', today: '#f38ba8', accent: '#cba6f7',
+             palette: ['#89b4fa', '#fab387', '#a6e3a1', '#f38ba8', '#cba6f7', '#f9e2af', '#94e2d5', '#f5c2e7'] } },
+  tokyonight: { name: 'Tokyo Night',
+    light: { bg: '#e1e2e7', panel: '#e9e9ed', ink: '#3760bf', muted: '#6172b0', line: '#c4c8da', weekend: '#d8d9e0', today: '#f52a65', accent: '#2e7de9',
+             palette: ['#2e7de9', '#b15c00', '#587539', '#f52a65', '#9854f1', '#8c6c3e', '#007197', '#d20065'] },
+    dark:  { bg: '#1a1b26', panel: '#16161e', ink: '#c0caf5', muted: '#7a83ad', line: '#292e42', weekend: '#1f2030', today: '#f7768e', accent: '#7aa2f7',
+             palette: ['#7aa2f7', '#ff9e64', '#9ece6a', '#f7768e', '#bb9af7', '#e0af68', '#7dcfff', '#ff007c'] } },
+  one: { name: 'One (Atom)',
+    light: { bg: '#fafafa', panel: '#f0f0f1', ink: '#383a42', muted: '#696c77', line: '#dbdbdc', weekend: '#f0f0f1', today: '#e45649', accent: '#4078f2',
+             palette: ['#4078f2', '#986801', '#50a14f', '#e45649', '#a626a4', '#c18401', '#0184bc', '#ca1243'] },
+    dark:  { bg: '#282c34', panel: '#21252b', ink: '#abb2bf', muted: '#7f848e', line: '#3e4451', weekend: '#2c313a', today: '#e06c75', accent: '#61afef',
+             palette: ['#61afef', '#d19a66', '#98c379', '#e06c75', '#c678dd', '#e5c07b', '#56b6c2', '#be5046'] } },
+  everforest: { name: 'Everforest',
+    light: { bg: '#fdf6e3', panel: '#f4f0d9', ink: '#5c6a72', muted: '#829181', line: '#e0dcc7', weekend: '#f4f0d9', today: '#f85552', accent: '#8da101',
+             palette: ['#3a94c5', '#f57d26', '#8da101', '#f85552', '#df69ba', '#dfa000', '#35a77c', '#939f91'] },
+    dark:  { bg: '#2d353b', panel: '#343f44', ink: '#d3c6aa', muted: '#9da9a0', line: '#475258', weekend: '#323c41', today: '#e67e80', accent: '#a7c080',
+             palette: ['#7fbbb3', '#e69875', '#a7c080', '#e67e80', '#d699b6', '#dbbc7f', '#83c092', '#9da9a0'] } },
+  rosepine: { name: 'Rosé Pine',
+    light: { bg: '#faf4ed', panel: '#fffaf3', ink: '#575279', muted: '#797593', line: '#dfdad9', weekend: '#f2e9e1', today: '#b4637a', accent: '#907aa9',
+             palette: ['#56949f', '#ea9d34', '#286983', '#b4637a', '#907aa9', '#d7827e', '#797593', '#9893a5'] },
+    dark:  { bg: '#191724', panel: '#1f1d2e', ink: '#e0def4', muted: '#908caa', line: '#26233a', weekend: '#1f1d2e', today: '#eb6f92', accent: '#c4a7e7',
+             palette: ['#9ccfd8', '#f6c177', '#31748f', '#eb6f92', '#c4a7e7', '#ebbcba', '#908caa', '#524f67'] } },
+};
+const MONTHS =['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const WD = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+
+const $ = id => document.getElementById(id);
+const pad = n => String(n).padStart(2, '0');
+const ymd = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
+const dateStr = d => ymd(d.getFullYear(), d.getMonth(), d.getDate());
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+let state = load();
+let year = new Date().getFullYear();
+let editing = null;
+let drag = null;
+
+function normalize(s) {
+  return {
+    events: Array.isArray(s.events) ? s.events : [],
+    categories: Array.isArray(s.categories) && s.categories.length ? s.categories : structuredClone(DEFAULT_CATS),
+    settings: Object.assign({ weekStart: 1, layout: 'week', theme: 'default', mode: 'auto', themeColors: true }, s.settings || {}),
+    savedAt: s.savedAt || 0,
+  };
+}
+function load() {
+  try { return normalize(JSON.parse(localStorage.getItem(KEY)) || {}); }
+  catch { return normalize({}); }
+}
+function save() {
+  state.savedAt = Date.now();
+  try { localStorage.setItem(KEY, JSON.stringify(state)); }
+  catch (e) { if (!fileReady) alert('Could not save to browser storage: ' + e.message); }
+  scheduleFileWrite();
+}
+
+// ---------- Auto-save to a file (File System Access API: Chrome / Edge) ----------
+const FS_OK = 'showSaveFilePicker' in window;
+const FILE_TYPES = [{ description: 'Linear Calendar data', accept: { 'application/json': ['.json'] } }];
+let fileHandle = null, fileReady = false, fileStatus = 'none', writeTimer = null;
+
+// The file handle is kept in IndexedDB so the link survives reloads.
+function idb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('linear-calendar', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function kvGet(k) {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const q = db.transaction('kv').objectStore('kv').get(k);
+    q.onsuccess = () => res(q.result);
+    q.onerror = () => rej(q.error);
+  });
+}
+async function kvSet(k, v) {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('kv', 'readwrite');
+    if (v === undefined) tx.objectStore('kv').delete(k); else tx.objectStore('kv').put(v, k);
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+function setFileStatus(s) {
+  fileStatus = s;
+  const name = fileHandle ? fileHandle.name : '';
+  const [label, title] = {
+    none:        ['💾 Auto-save to file…', 'Keep your calendar in a file on your computer'],
+    saving:      ['⟳ ' + name, 'Saving…'],
+    saved:       ['✓ ' + name, `Every change is saved to ${name} · click for options`],
+    reconnect:   ['⚠ Reconnect ' + name, `The browser needs your OK to keep saving to ${name}`],
+    error:       ['⚠ Not saved to file', `Couldn't write to ${name} · click to retry`],
+    unsupported: ['💾 Auto-save', 'Saving to a file needs Chrome or Edge'],
+  }[s];
+  const b = $('fileBtn');
+  b.textContent = label;
+  b.title = title;
+  b.classList.toggle('warn', s === 'reconnect' || s === 'error');
+}
+
+function scheduleFileWrite() {
+  if (!fileReady) return;
+  clearTimeout(writeTimer);
+  setFileStatus('saving');
+  writeTimer = setTimeout(writeFile, 400);
+}
+async function writeFile() {
+  if (!fileReady) return;
+  try {
+    const w = await fileHandle.createWritable();
+    await w.write(JSON.stringify(state, null, 2));
+    await w.close();
+    setFileStatus('saved');
+  } catch (e) {
+    fileReady = false;
+    setFileStatus('error');
+    console.error(e);
+  }
+}
+async function readFile(h) {
+  const text = await (await h.getFile()).text();
+  if (!text.trim()) return null;
+  let data;
+  try { data = JSON.parse(text); } catch { data = null; }
+  if (!data || !Array.isArray(data.events)) throw new Error(`"${h.name}" isn't a Linear Calendar data file.`);
+  return data;
+}
+
+// Link a file. On startup the newer copy (browser or file) wins; when the user
+// picks a file that already has events, they choose which to keep.
+async function connect(h, fromPicker) {
+  const data = await readFile(h);
+  fileHandle = h;
+  fileReady = true;
+  await kvSet('fileHandle', h).catch(() => {});
+  if (data) {
+    let useFile;
+    if (!fromPicker) useFile = data.savedAt >= state.savedAt;
+    else if (!state.events.length) useFile = true;
+    else useFile = confirm(`"${h.name}" contains ${data.events.length} event(s).\n\n` +
+      `OK: load the file (replaces the ${state.events.length} event(s) shown now)\n` +
+      `Cancel: keep what's shown now and overwrite the file`);
+    if (useFile) {
+      state = normalize(data);
+      try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {}
+      applyTheme();
+      render();
+      setFileStatus('saved');
+      return;
+    }
+  }
+  setFileStatus('saving');
+  await writeFile();
+}
+
+async function initFile() {
+  if (!FS_OK) return setFileStatus('unsupported');
+  setFileStatus('none');
+  const h = await kvGet('fileHandle').catch(() => null);
+  if (!h) return;
+  fileHandle = h;
+  try {
+    if (await h.queryPermission({ mode: 'readwrite' }) === 'granted') await connect(h, false);
+    else setFileStatus('reconnect');
+  } catch (e) {
+    setFileStatus('reconnect');
+    console.error(e);
+  }
+}
+async function reconnect() {
+  try {
+    if (await fileHandle.requestPermission({ mode: 'readwrite' }) === 'granted') await connect(fileHandle, false);
+  } catch (e) {
+    alert(`Couldn't open "${fileHandle.name}" (${e.message}).\nIt may have been moved or renamed. Choose it again.`);
+    openFileDlg();
+  }
+}
+
+function openFileDlg() {
+  $('fileInfo').textContent = fileHandle
+    ? `Every change is saved automatically to "${fileHandle.name}". You can switch to a different file or stop auto-saving.`
+    : 'Choose a file to keep your calendar in. Every change is written to it automatically, so your events are safe even if browser data is cleared. Putting it in a synced folder (OneDrive, Dropbox…) also gives you an off-computer backup.';
+  $('fileUnlink').hidden = !fileHandle;
+  $('fileDlg').showModal();
+}
+async function pickFile(picker) {
+  try {
+    const h = await picker();
+    $('fileDlg').close();
+    await connect(h, true);
+  } catch (e) {
+    if (e.name !== 'AbortError') alert('Could not use that file: ' + e.message);
+  }
+}
+$('fileBtn').onclick = () => {
+  if (fileStatus === 'unsupported') {
+    return alert("Automatic saving to a file needs Chrome or Edge (Firefox and Safari don't allow web pages to write files). Use Export to save backups instead.");
+  }
+  if (fileStatus === 'reconnect' || fileStatus === 'error') return reconnect();
+  openFileDlg();
+};
+$('fileNew').onclick = () => pickFile(() => showSaveFilePicker({ suggestedName: 'linear-calendar.json', types: FILE_TYPES }));
+$('fileOpen').onclick = () => pickFile(async () => (await showOpenFilePicker({ types: FILE_TYPES }))[0]);
+$('fileUnlink').onclick = async () => {
+  fileHandle = null;
+  fileReady = false;
+  await kvSet('fileHandle', undefined).catch(() => {});
+  setFileStatus('none');
+  $('fileDlg').close();
+};
+const catById = id => state.categories.find(c => c.id === id) || state.categories[0];
+
+// Pick black or white text depending on the background colour.
+function textOn(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.62 ? '#1c1917' : '#ffffff';
+}
+
+// ---------- Themes ----------
+const darkMQ = matchMedia('(prefers-color-scheme: dark)');
+let palette = THEMES.default.light.palette;
+function applyTheme(forceLight) {
+  const { theme, mode } = state.settings;
+  const t = THEMES[theme] || THEMES.default;
+  const dark = !forceLight && (mode === 'dark' || (mode === 'auto' && darkMQ.matches));
+  const v = dark ? t.dark : t.light;
+  const root = document.documentElement.style;
+  for (const k of ['bg', 'panel', 'ink', 'muted', 'line', 'weekend', 'today', 'accent']) root.setProperty('--' + k, v[k]);
+  root.setProperty('--on-accent', textOn(v.accent));
+  root.setProperty('--danger', v.palette[3]);
+  root.colorScheme = dark ? 'dark' : 'light';
+  palette = v.palette;
+}
+function catColor(c) {
+  return state.settings.themeColors ? palette[state.categories.indexOf(c) % palette.length] : c.color;
+}
+darkMQ.addEventListener('change', () => { if (state.settings.mode === 'auto') { applyTheme(); render(); } });
+// Always print with the light variant to save ink
+addEventListener('beforeprint', () => { applyTheme(true); render(); });
+addEventListener('afterprint', () => { applyTheme(); render(); });
+
+// ---------- Rendering ----------
+function render() {
+  const { layout, weekStart } = state.settings;
+  const cols = layout === 'week' ? 37 : 31;
+  const todayStr = dateStr(new Date());
+  const cal = $('cal');
+  cal.style.setProperty('--cols', cols);
+  cal.innerHTML = '';
+  $('yearLabel').textContent = year;
+  $('printTitle').textContent = year;
+  document.title = `Linear Calendar ${year}`;
+  $('layoutSel').value = layout;
+  $('weekStartSel').value = String(weekStart);
+  $('weekStartSel').hidden = layout !== 'week';
+  $('themeSel').value = state.settings.theme;
+  $('modeSel').value = state.settings.mode;
+
+  // Header row
+  const head = el('div', 'row head');
+  head.append(el('div', 'mlabel'));
+  const hg = el('div', 'grid');
+  for (let c = 0; c < cols; c++) {
+    if (layout === 'week') {
+      const wd = (c + weekStart) % 7;
+      hg.append(el('div', wd === 0 || wd === 6 ? 'we' : '', WD[wd]));
+    } else {
+      hg.append(el('div', '', c + 1));
+    }
+  }
+  head.append(hg);
+  cal.append(head);
+
+  const hiddenCats = new Set(state.categories.filter(c => c.hidden).map(c => c.id));
+  const visible = state.events.filter(e => !hiddenCats.has(e.cat));
+
+  for (let m = 0; m < 12; m++) {
+    const dim = new Date(year, m + 1, 0).getDate();
+    const offset = layout === 'week' ? (new Date(year, m, 1).getDay() - weekStart + 7) % 7 : 0;
+    const mStart = ymd(year, m, 1), mEnd = ymd(year, m, dim);
+
+    // Event segments clipped to this month, stacked into lanes
+    const segs = visible
+      .filter(e => e.end >= mStart && e.start <= mEnd)
+      .map(e => {
+        const s = e.start < mStart ? mStart : e.start;
+        const en = e.end > mEnd ? mEnd : e.end;
+        return { e, cs: offset + +s.slice(8) - 1, ce: offset + +en.slice(8) - 1,
+                 contL: e.start < mStart, contR: e.end > mEnd };
+      })
+      .sort((a, b) => a.cs - b.cs || (b.ce - b.cs) - (a.ce - a.cs));
+    const laneEnds = [];
+    for (const sg of segs) {
+      let lane = laneEnds.findIndex(end => end < sg.cs);
+      if (lane === -1) { lane = laneEnds.length; laneEnds.push(0); }
+      laneEnds[lane] = sg.ce;
+      sg.lane = lane;
+    }
+    const lanes = Math.max(1, laneEnds.length);
+
+    const row = el('div', 'row');
+    row.append(el('div', 'mlabel', MONTHS[m]));
+    const grid = el('div', 'grid');
+    grid.style.gridTemplateRows = `16px repeat(${lanes}, 17px) 4px`;
+
+    for (let c = 0; c < cols; c++) {
+      const d = c - offset + 1;
+      const cell = el('div', 'day');
+      cell.style.gridColumn = c + 1;
+      if (d < 1 || d > dim) {
+        cell.classList.add('empty');
+      } else {
+        const ds = ymd(year, m, d);
+        const wd = new Date(year, m, d).getDay();
+        cell.dataset.date = ds;
+        cell.textContent = layout === 'week' ? d : WD[wd];
+        cell.title = new Date(year, m, d).toDateString();
+        if (wd === 0 || wd === 6) cell.classList.add('we');
+        if (ds === todayStr) cell.classList.add('today');
+      }
+      grid.append(cell);
+    }
+
+    for (const sg of segs) {
+      const cat = catById(sg.e.cat);
+      const ev = el('div', 'ev', sg.e.title);
+      ev.dataset.id = sg.e.id;
+      ev.style.gridColumn = `${sg.cs + 1} / ${sg.ce + 2}`;
+      ev.style.gridRow = sg.lane + 2;
+      const color = catColor(cat);
+      ev.style.background = color;
+      ev.style.color = textOn(color);
+      if (sg.contL) ev.classList.add('cont-l');
+      if (sg.contR) ev.classList.add('cont-r');
+      ev.title = `${sg.e.title}\n${fmtRange(sg.e.start, sg.e.end)} · ${cat.name}` + (sg.e.notes ? `\n\n${sg.e.notes}` : '');
+      grid.append(ev);
+    }
+
+    row.append(grid);
+    cal.append(row);
+  }
+  renderLegend();
+}
+
+function renderLegend() {
+  const lg = $('legend');
+  lg.innerHTML = '';
+  for (const c of state.categories) {
+    const chip = el('span', 'chip' + (c.hidden ? ' off' : ''));
+    const dot = el('span', 'dot');
+    dot.style.background = catColor(c);
+    chip.append(dot, document.createTextNode(c.name));
+    chip.title = 'Click to show/hide';
+    chip.onclick = () => { c.hidden = !c.hidden; save(); render(); };
+    lg.append(chip);
+  }
+  const edit = el('button', '', 'Edit categories');
+  edit.onclick = openCategories;
+  lg.append(edit, el('span', 'hint', 'Click or drag across days to add an event · click an event to edit'));
+}
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+function fmtRange(s, e) {
+  const f = x => { const [y, m, d] = x.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }); };
+  return s === e ? f(s) : `${f(s)} – ${f(e)}`;
+}
+
+// ---------- Drag to select ----------
+const cal = $('cal');
+cal.addEventListener('pointerdown', e => {
+  const d = e.target.closest('.day[data-date]');
+  if (!d || e.button !== 0) return;
+  e.preventDefault();
+  drag = { a: d.dataset.date, b: d.dataset.date };
+  document.body.classList.add('dragging');
+  paintSel();
+});
+document.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const t = document.elementFromPoint(e.clientX, e.clientY);
+  const d = t && t.closest('.day[data-date]');
+  if (d && d.dataset.date !== drag.b) { drag.b = d.dataset.date; paintSel(); }
+});
+document.addEventListener('pointerup', () => {
+  if (!drag) return;
+  const [s, en] = [drag.a, drag.b].sort();
+  drag = null;
+  document.body.classList.remove('dragging');
+  openEditor({ start: s, end: en, cat: state.categories.find(c => !c.hidden)?.id || state.categories[0].id });
+});
+function paintSel(range) {
+  const [s, e] = range || (drag ? [drag.a, drag.b].sort() : ['', '']);
+  for (const c of cal.querySelectorAll('.day[data-date]')) {
+    c.classList.toggle('sel', !!s && c.dataset.date >= s && c.dataset.date <= e);
+  }
+}
+cal.addEventListener('click', e => {
+  const evEl = e.target.closest('.ev');
+  if (!evEl) return;
+  const ev = state.events.find(x => x.id === evEl.dataset.id);
+  if (ev) openEditor(ev);
+});
+
+// ---------- Event editor ----------
+const evDlg = $('evDlg'), evForm = $('evForm');
+function openEditor(ev) {
+  editing = ev;
+  const f = evForm.elements;
+  f.cat.innerHTML = '';
+  for (const c of state.categories) f.cat.append(new Option(c.name, c.id));
+  f.title.value = ev.title || '';
+  f.start.value = ev.start;
+  f.end.value = ev.end;
+  f.cat.value = ev.cat || state.categories[0].id;
+  f.notes.value = ev.notes || '';
+  $('evDlgTitle').textContent = ev.id ? 'Edit event' : 'New event';
+  $('evDelete').hidden = !ev.id;
+  if (ev.id) paintSel([ev.start, ev.end]);
+  evDlg.showModal();
+  f.title.focus();
+}
+evForm.addEventListener('submit', e => {
+  e.preventDefault();
+  const f = evForm.elements;
+  let s = f.start.value, en = f.end.value || s;
+  if (en < s) [s, en] = [en, s];
+  const data = { title: f.title.value.trim() || 'Untitled', start: s, end: en, cat: f.cat.value, notes: f.notes.value.trim() };
+  if (editing.id) Object.assign(editing, data);
+  else state.events.push({ id: uid(), ...data });
+  save();
+  evDlg.close();
+  render();
+});
+$('evCancel').onclick = () => evDlg.close();
+$('evDelete').onclick = () => {
+  if (!confirm(`Delete "${editing.title}"?`)) return;
+  state.events = state.events.filter(x => x.id !== editing.id);
+  save();
+  evDlg.close();
+  render();
+};
+evDlg.addEventListener('close', () => { editing = null; paintSel(['', '']); });
+// Keep the selection highlight in sync while editing dates
+evForm.elements.start.addEventListener('input', syncSel);
+evForm.elements.end.addEventListener('input', syncSel);
+function syncSel() {
+  const f = evForm.elements;
+  if (f.start.value && f.end.value) paintSel([f.start.value, f.end.value].sort());
+}
+
+// ---------- Categories ----------
+function openCategories() { renderCatList(); $('catDlg').showModal(); }
+function renderCatList() {
+  const list = $('catList');
+  list.innerHTML = '';
+  $('themeColors').checked = state.settings.themeColors;
+  for (const c of state.categories) {
+    const r = el('div', 'catrow');
+    const color = el('input'); color.type = 'color'; color.value = catColor(c);
+    color.disabled = state.settings.themeColors;
+    color.title = color.disabled ? 'Untick "Use the theme\'s colours" to pick your own' : 'Pick a colour';
+    color.oninput = () => { c.color = color.value; save(); render(); };
+    const name = el('input'); name.value = c.name;
+    name.oninput = () => { c.name = name.value; save(); render(); };
+    const del = el('button', 'danger', '✕'); del.type = 'button'; del.title = 'Delete category';
+    del.onclick = () => {
+      if (state.categories.length === 1) return alert('You need at least one category.');
+      const used = state.events.filter(e => e.cat === c.id).length;
+      const rest = state.categories.filter(x => x !== c);
+      if (used && !confirm(`${used} event(s) use "${c.name}". Move them to "${rest[0].name}"?`)) return;
+      state.events.forEach(e => { if (e.cat === c.id) e.cat = rest[0].id; });
+      state.categories = rest;
+      save(); render(); renderCatList();
+    };
+    r.append(color, name, del);
+    list.append(r);
+  }
+}
+$('themeColors').onchange = e => {
+  // Switching to custom colours starts from what's on screen, so nothing jumps
+  if (!e.target.checked) state.categories.forEach(c => { c.color = catColor(c); });
+  state.settings.themeColors = e.target.checked;
+  save(); render(); renderCatList();
+};
+$('catAdd').onclick = () => {
+  const palette = ['#8b5cf6', '#06b6d4', '#eab308', '#ec4899', '#64748b', '#84cc16'];
+  state.categories.push({ id: uid(), name: 'New category', color: palette[state.categories.length % palette.length] });
+  save(); render(); renderCatList();
+  $('catList').lastChild.querySelector('input:not([type])').select();
+};
+
+// ---------- Toolbar ----------
+$('prev').onclick = () => { year--; render(); };
+$('next').onclick = () => { year++; render(); };
+$('todayBtn').onclick = () => { year = new Date().getFullYear(); render(); };
+for (const [id, t] of Object.entries(THEMES)) $('themeSel').append(new Option(t.name, id));
+$('themeSel').onchange = e => { state.settings.theme = e.target.value; save(); applyTheme(); render(); };
+$('modeSel').onchange = e => { state.settings.mode = e.target.value; save(); applyTheme(); render(); };
+$('layoutSel').onchange =e => { state.settings.layout = e.target.value; save(); render(); };
+$('weekStartSel').onchange = e => { state.settings.weekStart = +e.target.value; save(); render(); };
+$('printBtn').onclick = () => window.print();
+document.addEventListener('keydown', e => {
+  if (document.querySelector('dialog[open]') || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+  if (e.key === 'ArrowLeft') $('prev').click();
+  else if (e.key === 'ArrowRight') $('next').click();
+  else if (e.key.toLowerCase() === 't') $('todayBtn').click();
+});
+
+$('exportBtn').onclick = () => {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `linear-calendar-${dateStr(new Date())}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$('importBtn').onclick = () => $('fileInput').click();
+$('fileInput').onchange = async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const text = await file.text();
+  try {
+    if (/\.ics$/i.test(file.name) || text.startsWith('BEGIN:VCALENDAR')) {
+      const evs = parseICS(text);
+      if (!evs.length) return alert('No events found in that file.');
+      let cat = state.categories.find(c => c.name === 'Imported');
+      if (!cat) { cat = { id: uid(), name: 'Imported', color: '#64748b' }; state.categories.push(cat); }
+      evs.forEach(ev => state.events.push({ id: uid(), cat: cat.id, ...ev }));
+      save(); render();
+      alert(`Imported ${evs.length} event(s) into the "Imported" category.`);
+    } else {
+      const data = JSON.parse(text);
+      if (!Array.isArray(data.events)) throw new Error('Not a Linear Calendar backup.');
+      if (!confirm(`Replace your current calendar with this backup (${data.events.length} events)?`)) return;
+      state = normalize(data);
+      save(); applyTheme(); render();
+    }
+  } catch (err) {
+    alert('Import failed: ' + err.message);
+  }
+};
+
+// Minimal iCalendar parser: single (non-recurring) events, dates only.
+function parseICS(text) {
+  const lines = text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/);
+  const unescape = v => v.replace(/\\n/gi, '\n').replace(/\\([,;\\])/g, '$1');
+  const toDate = v => `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}`;
+  const out = [];
+  let cur = null;
+  for (const line of lines) {
+    if (line === 'BEGIN:VEVENT') { cur = {}; continue; }
+    if (line === 'END:VEVENT') {
+      if (cur && cur.start) {
+        let end = cur.end || cur.start;
+        if (cur.end && cur.allDayEnd && end > cur.start) {
+          // All-day DTEND is exclusive
+          const [y, m, d] = end.split('-').map(Number);
+          end = dateStr(new Date(y, m - 1, d - 1));
+        }
+        if (end < cur.start) end = cur.start;
+        out.push({ title: cur.title || 'Untitled', start: cur.start, end, notes: cur.notes || '' });
+      }
+      cur = null;
+      continue;
+    }
+    if (!cur) continue;
+    const i = line.indexOf(':');
+    if (i < 0) continue;
+    const name = line.slice(0, i).split(';')[0].toUpperCase();
+    const val = line.slice(i + 1);
+    if (name === 'SUMMARY') cur.title = unescape(val);
+    else if (name === 'DESCRIPTION') cur.notes = unescape(val);
+    else if (name === 'DTSTART') cur.start = toDate(val);
+    else if (name === 'DTEND') { cur.end = toDate(val); cur.allDayEnd = !val.includes('T'); }
+  }
+  return out;
+}
+
+applyTheme();
+render();
+initFile();
+</script>
+</body>
+</html>
